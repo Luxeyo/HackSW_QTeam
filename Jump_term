@@ -1,0 +1,208 @@
+import requests
+import numpy as np
+
+# ==========================================
+# 1. THE MATH KERNEL (Fixed & Complete)
+# ==========================================
+
+def calculate_merton_params(
+    # --- REQUIRED INPUTS (No Defaults) ---
+    sybil_score: float,       
+    sybil_wealth: float,      
+    liquidity_usd: float,     
+    delta_doxxed: float,      
+    delta_history: float,     
+    delta_social: float,      
+    btc_volatility: float,    
+
+    # --- TUNING/OPTIONAL INPUTS (Have Defaults) ---
+    sensitivity_r: float = 1.0,   # 'r' (Sensitivity)
+    convexity_alpha: float = 2.0, # 'alpha' (Panic Factor)
+    lambda_base: float = 2.0, 
+    lambda_max: float = 10.0,
+    l_saturation: float = 500_000,
+    beta: float = 1.5,        
+    k_cap: float = 1.0        
+):
+    """
+    Implements the handwritten Jump Diffusion math.
+    """
+    # ------------------------------------------
+    # A. JUMP MAGNITUDE (Mu_J) - Image 2
+    # ------------------------------------------
+    
+    # Calculate p (Whale to Pool Ratio)
+    # Formula: p = W_sybil / USD Liquidity
+    p = sybil_wealth / (liquidity_usd + 1.0)
+    
+    # Calculate Impact Phi (The curve)
+    # Formula: Sybil * (1 - 1/(1 + r*p)^alpha)
+    denom = (1 + sensitivity_r * p) ** convexity_alpha
+    phi_impact = sybil_score * (1 - (1 / denom))
+    
+    # Cap phi at 0.999 to keep log valid
+    phi_impact = min(phi_impact, 0.999)
+    
+    # Calculate Mu_J
+    mu_j = np.log(1 - phi_impact)
+    
+    # Calculate Delta_J (Volatility of the jump)
+    delta_j = 0.2 + (0.5 * (1 - sybil_score))
+
+    # ------------------------------------------
+    # B. JUMP FREQUENCY (Lambda) - Image 1
+    # ------------------------------------------
+    
+    # 1. Reputation Multiplier (M_rep)
+    m_rep = delta_doxxed * delta_history * delta_social
+    
+    # 2. Liquidity Risk (R_liq)
+    # Formula: 1 - tanh( (2.65 * Liq) / L_sat )
+    # CORRECTION IS HERE:
+    tanh_term = np.tanh((2.65 * liquidity_usd) / l_saturation)
+    r_liq = 1 - tanh_term
+    
+    # 3. Market Condition (R_mkt)
+    # Formula: 1 + min(k, beta * |BTC|)
+    market_impact = beta * abs(btc_volatility)
+    r_mkt = 1 + min(k_cap, market_impact)
+    
+    # 4. Total Lambda
+    lambda_total = ((lambda_base * m_rep) + (lambda_max * r_liq)) * r_mkt
+
+    return {
+        "mu_j": mu_j,
+        "delta_j": delta_j,
+        "lambda_total": lambda_total,
+        "implied_drop": phi_impact,
+        "debug": {
+            "p_ratio": p,
+            "m_rep": m_rep,
+            "r_liq": r_liq,
+            "r_mkt": r_mkt
+        }
+    }
+
+# ==========================================
+# 2. THE API CONNECTOR
+# ==========================================
+
+def get_token_data_usd(query):
+    print(f"🔎 Searching DexScreener for '{query}'...")
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
+        response = requests.get(url).json()
+        
+        pairs = response.get('pairs', [])
+        if not pairs:
+            return None
+            
+        # Sort by liquidity to find the main pair
+        best_pair = sorted(pairs, key=lambda x: x.get('liquidity', {}).get('usd', 0), reverse=True)[0]
+        
+        return {
+            "name": best_pair['baseToken']['name'],
+            "symbol": best_pair['baseToken']['symbol'],
+            "price_usd": float(best_pair['priceUsd']),
+            "liquidity_usd": float(best_pair.get('liquidity', {}).get('usd', 0)),
+            "market_cap_usd": float(best_pair.get('fdv', 0)),
+            "pair_address": best_pair['pairAddress'],
+            "dex": best_pair['dexId']
+        }
+    except Exception as e:
+        print(f"❌ API Error: {e}")
+        return None
+
+# ==========================================
+# 3. THE INTERFACE
+# ==========================================
+
+def run_risk_analysis():
+    print("--- 🛡️ CRYPTO RISK ENGINE (Handwritten Math v2) 🛡️ ---")
+    
+    # A. Get User Input & Fetch Data
+    token_name = input("Enter Token Symbol (e.g. PEPE, WIF): ").strip()
+    data = get_token_data_usd(token_name)
+    
+    if not data:
+        print(f"❌ Could not find token '{token_name}'.")
+        return
+
+    print(f"\n✅ FOUND: {data['name']} ({data['symbol']})")
+    print(f"   Price:      ${data['price_usd']}")
+    print(f"   Liquidity:  ${data['liquidity_usd']:,.0f}")
+    print(f"   Market Cap: ${data['market_cap_usd']:,.0f}")
+    
+    # B. Ask for "Sybil & Wealth" (The missing variables)
+    print("\n--- 🧪 INPUT SYBIL & DISTRIBUTION DATA ---")
+    
+    try:
+        # 1. Wealth Distribution
+        print(f"\n[1] WEALTH DISTRIBUTION")
+        print(f"   (Market Cap is ${data['market_cap_usd']:,.0f})")
+        ownership_pct = float(input("   Enter Top Holder/Team Ownership % (e.g. 0.40 for 40%): "))
+        sybil_wealth = data['market_cap_usd'] * ownership_pct
+        print(f"   -> Implied Sybil Wealth ($W_sybil): ${sybil_wealth:,.0f}")
+
+        # 2. Sybil Score
+        print(f"\n[2] SYBIL SCORE")
+        sybil_score = float(input("   Enter Sybil Score (0.0 = Safe, 1.0 = Scam): "))
+
+        # 3. Reputation Deltas
+        print(f"\n[3] REPUTATION FACTORS (For Frequency)")
+        is_doxxed = input("   Is Team Doxxed? (y/n): ").lower() == 'y'
+        has_history = input("   Has Established History? (y/n): ").lower() == 'y'
+        social_score = float(input("   Social Sentiment (0.0 = Bad, 1.0 = Great): "))
+        
+        # Map inputs to Deltas
+        d_doxxed = 0.5 if is_doxxed else 1.0
+        d_history = 0.6 if has_history else 1.0
+        d_social = 1.0 - (0.5 * social_score) 
+
+        # 4. Market Condition
+        print(f"\n[4] MARKET CONDITIONS")
+        btc_vol = float(input("   Current BTC Volatility (e.g. 0.05 for 5%): "))
+
+    except ValueError:
+        print("❌ Invalid input. Please enter numbers.")
+        return
+
+    # C. Run Calculation
+    results = calculate_merton_params(
+        # Required (Positional)
+        sybil_score=sybil_score,
+        sybil_wealth=sybil_wealth,
+        liquidity_usd=data['liquidity_usd'],
+        delta_doxxed=d_doxxed,
+        delta_history=d_history,
+        delta_social=d_social,
+        btc_volatility=btc_vol,
+        
+        # Optional (Keyword/Defaults)
+        sensitivity_r=1.0,
+        convexity_alpha=2.0
+    )
+
+    # D. Print Report
+    print("\n" + "="*50)
+    print(f" 📊 FINAL RISK REPORT: {data['symbol']}")
+    print("="*50)
+    
+    print(f"\n1. JUMP MAGNITUDE (How hard it falls)")
+    print(f"   Mu_J (Log Mean):      {results['mu_j']:.4f}")
+    print(f"   Delta_J (Volatility): {results['delta_j']:.4f}")
+    print(f"   PREDICTED DROP SIZE:  {results['implied_drop']:.2%}")
+    print(f"   (Driven by Whale Ratio 'p': {results['debug']['p_ratio']:.2f}x)")
+    
+    print(f"\n2. JUMP FREQUENCY (How often it falls)")
+    print(f"   Lambda Total:  {results['lambda_total']:.4f} jumps/year")
+    print(f"   Est Interval:  Every {12/results['lambda_total']:.1f} months")
+    
+    print(f"\n3. SCORING BREAKDOWN")
+    print(f"   Reputation Multiplier: {results['debug']['m_rep']:.2f}x")
+    print(f"   Liquidity Risk Factor: {results['debug']['r_liq']:.2f} (0=Safe, 1=Risk)")
+    print(f"   Market Condition Mult: {results['debug']['r_mkt']:.2f}x")
+    print("="*50)
+
+if __name__ == "__main__":
+    run_risk_analysis()
