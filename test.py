@@ -5,6 +5,7 @@ import discord  #discord API
 from discord.ext import commands  #bot framework
 
 from mkt_cap import get_market_caps_usd, format_usd  #market cap helpers split out
+from risk_engine import calculate_risk  #this style
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")  #discord bot token
@@ -157,21 +158,66 @@ async def get_usd_prices(coingecko_ids: list[str]) -> dict:  #fetch live prices
             return await resp.json()
 
 
-async def calculate_risk_score_placeholder(from_id: str, to_id: str, amount: float) -> str:  #stub
-    return "Risk score placeholder: not calculated yet."
-
-
 class RiskView(discord.ui.View):  #button container
-    def __init__(self, from_id: str, to_id: str, amount: float):
+    def __init__(  #this style
+        self,
+        from_id: str,
+        to_id: str,
+        amount: float,
+        from_price: float,
+        to_price: float,
+        from_cap: float | None,
+        to_cap: float | None,
+    ):
         super().__init__(timeout=300)
         self.from_id = from_id
         self.to_id = to_id
         self.amount = amount
+        self.from_price = from_price
+        self.to_price = to_price
+        self.from_cap = from_cap
+        self.to_cap = to_cap
 
-    @discord.ui.button(label="Calculate risk score", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Calc risk", style=discord.ButtonStyle.primary)  #this style
     async def calc_risk(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await calculate_risk_score_placeholder(self.from_id, self.to_id, self.amount)
-        await interaction.response.send_message(result, ephemeral=True)
+        await interaction.response.defer(ephemeral=True)  #this style
+
+        try:
+            result = await calculate_risk(  #this style
+                from_id=self.from_id,
+                to_id=self.to_id,
+                amount=self.amount,
+                from_price=self.from_price,
+                to_price=self.to_price,
+                from_cap=self.from_cap,
+                to_cap=self.to_cap,
+                coingecko_key=COINGECKO_KEY,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"Risk calc failed: {e}", ephemeral=True)  #this style
+            return
+
+        #this style
+        #update the original embed so the channel sees the headline score  #this style
+        try:
+            embed = interaction.message.embeds[0] if interaction.message.embeds else None  #this style
+            if embed:
+                fields = list(embed.fields)  #this style
+                for i, f in enumerate(fields):  #this style
+                    if (f.name or "").lower().strip() == "risk score":  #this style
+                        fields[i].value = f"`{result['total']}/100`"  #this style
+                        break  #this style
+
+                new_embed = discord.Embed(title=embed.title, description=embed.description)  #this style
+                new_embed.colour = embed.colour  #this style
+                for f in fields:  #this style
+                    new_embed.add_field(name=f.name, value=f.value, inline=f.inline)  #this style
+
+                await interaction.message.edit(embed=new_embed, view=self)  #this style
+        except Exception:
+            pass  #this style
+
+        await interaction.followup.send(result["text"], ephemeral=True)  #this style
 
 
 @bot.tree.command(  #slash command entry
@@ -235,9 +281,17 @@ async def trade(interaction: discord.Interaction, from_token: str, to_token: str
         inline=False,
     )
 
-    embed.add_field(name="Risk score", value="`not calculated`", inline=False)
+    embed.add_field(name="Risk score", value="`click calc risk`", inline=False)  #this style
 
-    view = RiskView(from_id=cg_from, to_id=cg_to, amount=amount)  #attach button
+    view = RiskView(  #this style
+        from_id=cg_from,
+        to_id=cg_to,
+        amount=amount,
+        from_price=from_price,
+        to_price=to_price,
+        from_cap=from_cap,
+        to_cap=to_cap,
+    )
     await interaction.channel.send(embed=embed, view=view)
 
     await interaction.followup.send("Posted trade preview.", ephemeral=True)  #final confirmation
@@ -250,4 +304,3 @@ async def on_ready():
 
 
 bot.run(BOT_TOKEN)  #start bot
-
