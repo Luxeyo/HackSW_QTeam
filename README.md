@@ -9,7 +9,9 @@ The project was originally prototyped using Discord webhooks to validate the ide
 
 The goal is not to predict price movements or provide financial advice, but to highlight structural risks such as low liquidity, small market capitalisation, or very new tokens.
 ## How it works
+*IN PROGRESS*
 ## Risk model
+*IN PROGRESS*
 ## Setup
+*IN PROGRESS*
 ## Commands
-
