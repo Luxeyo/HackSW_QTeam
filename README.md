@@ -14,4 +14,5 @@ The goal is not to predict price movements or provide financial advice, but to h
 *IN PROGRESS*
 ## Setup
 *IN PROGRESS*
-## Commands
+## Command(s)
+*Prototype command '/trade' , would activate a trade triggering the discord webhook.*
